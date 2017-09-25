@@ -11,6 +11,7 @@
 //    #define DETECT_LEAKS  //for now always enable DETECT_LEAKS in debug.
 //#endif
 
+using Sparrow.Json;
 using Sparrow.Threading;
 using Sparrow.Utils;
 
@@ -355,6 +356,16 @@ namespace Sparrow
         void IResetSupport<List<T1>>.Reset(List<T1> value)
         {
             value.Clear();
+        }
+    }
+    
+    public struct JsonOperationContextResetBehavior : IResetSupport<JsonOperationContext>
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Reset(JsonOperationContext value)
+        {
+            value.Reset();
+            value.Renew();
         }
     }
 

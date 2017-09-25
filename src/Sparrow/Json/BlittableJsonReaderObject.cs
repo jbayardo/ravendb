@@ -11,6 +11,9 @@ using Sparrow.Json.Parsing;
 
 namespace Sparrow.Json
 {
+    /// <summary>
+    /// This class parses Blittable Json, not Json TEXT, and makes it accessible.
+    /// </summary>
     public unsafe class BlittableJsonReaderObject : BlittableJsonReaderBase, IDisposable
     {
         private AllocatedMemoryData _allocatedMemory;

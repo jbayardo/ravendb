@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -7,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Raven.Client.Documents.Commands.Batches;
 using Raven.Client.Extensions;
+using Raven.Client.Extensions.Streams;
 using Raven.Server.Documents.Patch;
 using Raven.Server.ServerWide;
 using Sparrow;
@@ -197,6 +199,41 @@ namespace Raven.Server.Documents.Handlers
                     return new CommandData { Type = CommandType.None };
 
                 return await ReadSingleCommand(ctx, _stream, _state, _parser, _buffer, _token);
+            }
+        }
+
+        public class BulkInsertReadMany : IDisposable
+        {
+            private readonly UnmanagedBlittableStreamParser _parser;
+
+            public BulkInsertReadMany(Stream stream)
+            {
+                _parser = new UnmanagedBlittableStreamParser(stream);
+            }
+
+            public async Task<CommandData> MoveNext(JsonOperationContext context)
+            {
+                var blittableJson = await _parser.MoveNext(context);
+                if (blittableJson == null)
+                    return new CommandData
+                    {
+                        Type = CommandType.None
+                    };
+
+                var id = blittableJson[nameof(PutCommandDataWithBlittableJson.Id)].ToString();
+                var docEmbedded = blittableJson[nameof(PutCommandDataWithBlittableJson.Document)] as BlittableJsonReaderObject;
+                var doc = context.ReadObject(docEmbedded, id);
+
+                return new CommandData
+                {
+                    Type = CommandType.PUT,
+                    Id = id,
+                    Document = doc
+                };
+            }
+
+            public void Dispose()
+            {
             }
         }
 

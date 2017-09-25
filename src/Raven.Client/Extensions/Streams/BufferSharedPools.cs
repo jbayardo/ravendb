@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Sparrow;
 
 namespace Raven.Client.Extensions.Streams
@@ -43,6 +44,36 @@ namespace Raven.Client.Extensions.Streams
         /// other I/O requests
         /// </summary>
         public static readonly ObjectPool<byte[]> MicroByteArray = new ObjectPool<byte[]>(() => new byte[MicroByteBufferSize], 100);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte[] FetchOrAllocate(int lowerBoundOnSize)
+        {
+            var pool = FetchFromSmallestPool(lowerBoundOnSize);
+            return pool != null ? pool.Allocate() : new byte[lowerBoundOnSize];
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Free(byte[] array)
+        {
+            var pool = FetchFromSmallestPool(array.Length);
+            pool?.Free(array);
+        }
+
+        private static ObjectPool<byte[]> FetchFromSmallestPool(int lowerBoundOnSize)
+        {
+            if (lowerBoundOnSize <= MicroByteBufferSize)
+                return MicroByteArray;
+            if (lowerBoundOnSize <= SmallByteBufferSize)
+                return SmallByteArray;
+            if (lowerBoundOnSize <= ByteBufferSize)
+                return ByteArray;
+            if (lowerBoundOnSize <= BigByteBufferSize)
+                return BigByteArray;
+            if (lowerBoundOnSize <= HugeByteBufferSize)
+                return HugeByteArray;
+
+            return null;
+        }
 
     }
 }

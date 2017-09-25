@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Raven.Client.Documents.Commands;
@@ -15,8 +18,10 @@ using Raven.Client.Documents.Session;
 using Raven.Client.Exceptions;
 using Raven.Client.Exceptions.Documents.BulkInsert;
 using Raven.Client.Extensions;
+using Raven.Client.Extensions.Streams;
 using Raven.Client.Http;
 using Raven.Client.Util;
+using Sparrow;
 using Sparrow.Json;
 using Sparrow.Json.Parsing;
 
@@ -140,11 +145,9 @@ namespace Raven.Client.Documents.BulkInsert
         private readonly JsonOperationContext _context;
         private readonly IDisposable _resetContext;
 
-        private BlittableJsonTextWriter _jsonWriter;
         private Stream _stream;
         private readonly StreamExposerContent _streamExposerContent;
 
-        private bool _first = true;
         private long _operationId = -1;
 
         public CompressionLevel CompressionLevel = CompressionLevel.NoCompression;
@@ -190,6 +193,9 @@ namespace Raven.Client.Documents.BulkInsert
             return id;
         }
 
+        private readonly ObjectPool<JsonOperationContext, JsonOperationContextResetBehavior> _storageContexts =
+            new ObjectPool<JsonOperationContext, JsonOperationContextResetBehavior>(JsonOperationContext.ShortTermSingleUse);
+        
         public async Task StoreAsync(object entity, string id, IMetadataDictionary metadata = null)
         {
             VerifyValidId(id);
@@ -205,9 +211,10 @@ namespace Raven.Client.Documents.BulkInsert
                 Collection = _requestExecutor.Conventions.GetCollectionName(entity)
             };
 
-            JsonOperationContext tempContext;
-            using (_requestExecutor.ContextPool.AllocateOperationContext(out tempContext))
+            using (var tempContextDisposer = _storageContexts.AllocateInContext())
             {
+                var tempContext = tempContextDisposer.Value;
+                
                 if (metadata != null)
                 {
                     docInfo.MetadataInstance = metadata;
@@ -216,22 +223,33 @@ namespace Raven.Client.Documents.BulkInsert
 
                 using (var doc = EntityToBlittable.ConvertEntityToBlittable(entity, _requestExecutor.Conventions, tempContext, docInfo))
                 {
-                    if (_first == false)
-                    {
-                        _jsonWriter.WriteComma();
-                    }
-                    _first = false;
-
                     var cmd = new DynamicJsonValue
                     {
                         [nameof(PutCommandDataWithBlittableJson.Type)] = "PUT",
                         [nameof(PutCommandDataWithBlittableJson.Id)] = id,
                         [nameof(PutCommandDataWithBlittableJson.Document)] = doc
                     };
+                    
+                    var blittReader = tempContext.ReadObject(cmd, id);
+                    var blittSize = blittReader.Size;
+
+                    // The BufferSharedPools return buffers that may be of greater size than bufferSize.
+                    var bufferSize = blittSize + 4;
+                    var buffer = BufferSharedPools.FetchOrAllocate(bufferSize);
+                    buffer[0] = (byte)blittSize;
+                    buffer[1] = (byte)(blittSize >> 8);
+                    buffer[2] = (byte)(blittSize >> 16);
+                    buffer[3] = (byte)(blittSize >> 24);
+
+                    unsafe
+                    {
+                        fixed (byte* bufferPtr = buffer)
+                            Memory.Copy(bufferPtr + 4, blittReader.BasePointer, blittSize);
+                    }
 
                     try
                     {
-                        tempContext.Write(_jsonWriter, cmd);
+                        await _requestBodyStream.WriteAsync(buffer, 0, bufferSize, _token).ConfigureAwait(false);
                     }
                     catch (Exception e)
                     {
@@ -241,6 +259,10 @@ namespace Raven.Client.Documents.BulkInsert
                             throw error;
                         }
                         await ThrowOnUnavailableStream(id, e).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        BufferSharedPools.Free(buffer);
                     }
                 }
             }
@@ -263,15 +285,15 @@ namespace Raven.Client.Documents.BulkInsert
         {
             var stateRequest = new GetOperationStateCommand(_requestExecutor.Conventions, _operationId);
             await _requestExecutor.ExecuteAsync(stateRequest, _context, _token).ConfigureAwait(false);
-            var error = stateRequest.Result.Result as OperationExceptionResult;
 
-            if (error == null)
+            if (!(stateRequest.Result.Result is OperationExceptionResult error))
                 return null;
             return new BulkInsertAbortedException(error.Error);
         }
 
 
-        private GZipStream _compressedStream = null;
+        private GZipStream _compressedStream;
+        private Stream _requestBodyStream;
 
         private async Task EnsureStream()
         {
@@ -285,15 +307,13 @@ namespace Raven.Client.Documents.BulkInsert
 
             _stream = await _streamExposerContent.OutputStream.ConfigureAwait(false);
 
-            var requestBodyStream = _stream;
-            if (CompressionLevel != CompressionLevel.NoCompression)
+            if (CompressionLevel == CompressionLevel.NoCompression)
             {
+                _requestBodyStream = new BufferedStream(_stream, 256 * 1024);
+            } else {
                 _compressedStream = new GZipStream(_stream, CompressionLevel, leaveOpen: true);
-                requestBodyStream = _compressedStream;
+                _requestBodyStream = _compressedStream;
             }
-
-            _jsonWriter = new BlittableJsonTextWriter(_context, requestBodyStream);
-            _jsonWriter.WriteStartArray();
         }
 
         private async Task ThrowOnUnavailableStream(string id, Exception innerEx)
@@ -338,9 +358,7 @@ namespace Raven.Client.Documents.BulkInsert
                 {
                     try
                     {
-                        _jsonWriter.WriteEndArray();
-                        _jsonWriter.Flush();
-                        _compressedStream?.Dispose();
+                        _requestBodyStream?.Dispose();
                         await _stream.FlushAsync(_token).ConfigureAwait(false);
                     }
                     catch (Exception e)

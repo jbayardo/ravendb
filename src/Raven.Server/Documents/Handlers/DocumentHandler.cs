@@ -230,39 +230,39 @@ namespace Raven.Server.Documents.Handlers
             HttpContext.Response.Headers["Content-Type"] = "binary/blittable-json";
 
             using (var streamBuffer = new UnmanagedStreamBuffer(context, ResponseBodyStream()))
-            using (var writer = new ManualBlittableJsonDocumentBuilder<UnmanagedStreamBuffer>(context,
-                null, new BlittableWriter<UnmanagedStreamBuffer>(context, streamBuffer)))
+            using (var writer = new BlittableWriter<UnmanagedStreamBuffer>(context, streamBuffer))
+            using (var builder = new ManualBlittableJsonDocumentBuilder<UnmanagedStreamBuffer>(context, null, writer))
             {
-                writer.StartWriteObjectDocument();
+                builder.StartWriteObjectDocument();
 
-                writer.StartWriteObject();
-                writer.WritePropertyName(nameof(GetDocumentResult.Results));
+                builder.StartWriteObject();
+                builder.WritePropertyName(nameof(GetDocumentResult.Results));
 
-                writer.StartWriteArray();
+                builder.StartWriteArray();
 
                 foreach (var document in documentsToWrite)
                 {
                     numberOfResults++;
-                    writer.WriteEmbeddedBlittableDocument(document.Data);
+                    builder.WriteEmbeddedBlittableDocument(document.Data);
                 }
 
-                writer.WriteArrayEnd();
+                builder.WriteArrayEnd();
 
-                writer.WritePropertyName(nameof(GetDocumentResult.Includes));
+                builder.WritePropertyName(nameof(GetDocumentResult.Includes));
 
-                writer.StartWriteObject();
+                builder.StartWriteObject();
 
                 foreach (var include in includes)
                 {
-                    writer.WritePropertyName(include.Id);
-                    writer.WriteEmbeddedBlittableDocument(include.Data);
+                    builder.WritePropertyName(include.Id);
+                    builder.WriteEmbeddedBlittableDocument(include.Data);
                 }
 
-                writer.WriteObjectEnd();
+                builder.WriteObjectEnd();
 
-                writer.WriteObjectEnd();
+                builder.WriteObjectEnd();
 
-                writer.FinalizeDocument();
+                builder.FinalizeDocument();
             }
         }
 

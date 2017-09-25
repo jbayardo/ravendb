@@ -553,13 +553,21 @@ namespace Sparrow.Json
             return currentState;
         }
 
-        //todo: consider allowing more forgiving functionality that will pop all states and close relevant objects/arrays
         public void FinalizeDocument()
         {
             var documentToken = _writeToken.WrittenToken;
             var rootOffset = _writeToken.ValuePos;
 
             _writer.WriteDocumentMetadata(rootOffset, documentToken);
+        }
+
+        /// <summary>
+        /// This is the more forgiving brother of FinalizeDocument that allows for instance reuse
+        /// </summary>
+        public void FinalizeAndReuse()
+        {
+            FinalizeDocument();
+            _continuationState.Clear();
         }
 
         private void ThrowIllegalStateException(ContinuationState state, string realOperation)

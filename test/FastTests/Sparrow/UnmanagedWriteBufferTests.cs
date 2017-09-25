@@ -297,7 +297,6 @@ namespace FastTests.Sparrow
 #else
                 Assert.Throws(typeof(NullReferenceException), () => buffer.WriteByte(10));
 #endif
-
             }
         }
 
@@ -308,8 +307,6 @@ namespace FastTests.Sparrow
             {
                 var buffer = new UnmanagedWriteBuffer(context, context.GetMemory(DefaultBufferSize));
                 buffer.Dispose();
-
-
 #if DEBUG
                 Assert.Throws(typeof(ObjectDisposedException), () => buffer.Write(AllocationsBatch, 0, AllocationsBatch.Length));
 #else
@@ -329,33 +326,20 @@ namespace FastTests.Sparrow
                 var outputBuffer = new byte[DefaultBufferSize];
                 fixed (byte* outputBufferPtr = outputBuffer)
                 {
+                    try
+                    {
+                        buffer.CopyTo(outputBufferPtr);
+                        Assert.False(true);
+                    }
 #if DEBUG
-                    try
-                    {
-                        buffer.CopyTo(outputBufferPtr);
-                        Assert.False(true);
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                    }
-                    catch (Exception)
-                    {
-                        Assert.False(true);
-                    }
+                    catch (ObjectDisposedException) { }
 #else
-                    try
-                    {
-                        buffer.CopyTo(outputBufferPtr);
-                        Assert.False(true);
-                    }
-                    catch (NullReferenceException)
-                    {
-                    }
+                    catch (NullReferenceException) { }
+#endif
                     catch (Exception)
                     {
                         Assert.False(true);
                     }
-#endif
                 }
             }
         }
